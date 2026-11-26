@@ -12,6 +12,7 @@ import {
   Legend,
 } from "recharts";
 import { DailyNutrition } from "@/lib/types";
+import { calculateTDEE, getRemainingCalories } from "@/lib/nutrition";
 
 interface HistoryEntry {
   date: string;
@@ -22,15 +23,45 @@ interface HistoryEntry {
   fat: number;
 }
 
+interface FoodSuggestion {
+  name: string;
+  calories: number;
+  purine_level: "low" | "medium" | "high";
+  note: string;
+}
+
 export default function NutritionPage() {
   const [date, setDate] = useState("");
   const [daily, setDaily] = useState<DailyNutrition | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [suggestingFoods, setSuggestingFoods] = useState(false);
+  const [suggestions, setSuggestions] = useState<FoodSuggestion[]>([]);
+
+  const tdee = calculateTDEE(37, 97, 186);
+  const consumed = daily?.totalCalories ?? 0;
+  const remaining = getRemainingCalories(consumed, tdee);
 
   useEffect(() => {
     setDate(new Date().toISOString().slice(0, 10));
   }, []);
+
+  const handleSuggestFoods = async () => {
+    setSuggestingFoods(true);
+    try {
+      const res = await fetch("/api/meals/suggest-foods", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ remainingCalories: remaining, dietType: "low_purine" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSuggestions(data.suggestions);
+      }
+    } finally {
+      setSuggestingFoods(false);
+    }
+  };
 
   useEffect(() => {
     if (!date) return;
@@ -91,11 +122,11 @@ export default function NutritionPage() {
 
   const stats = daily
     ? [
-        { label: "Calories", value: daily.totalCalories, unit: "kcal", color: "text-blue-600" },
+        { label: "Consumed", value: daily.totalCalories, unit: "kcal", color: "text-blue-600" },
+        { label: "Remaining", value: remaining, unit: "kcal", color: "text-blue-400" },
         { label: "Protein", value: daily.totalProtein, unit: "g", color: "text-green-600" },
         { label: "Carbs", value: daily.totalCarbs, unit: "g", color: "text-yellow-600" },
         { label: "Fat", value: daily.totalFat, unit: "g", color: "text-red-500" },
-        { label: "Fiber", value: daily.totalFiber, unit: "g", color: "text-purple-600" },
       ]
     : [];
 
@@ -135,11 +166,53 @@ export default function NutritionPage() {
         )}
 
         {daily && daily.mealCount > 0 && (
-          <p className="text-xs text-gray-400 mt-3 text-center">
-            {daily.mealCount} meal{daily.mealCount !== 1 ? "s" : ""} recorded
-          </p>
+          <>
+            <p className="text-xs text-gray-400 mt-3 text-center">
+              {daily.mealCount} meal{daily.mealCount !== 1 ? "s" : ""} recorded
+            </p>
+            {remaining > 100 && (
+              <button
+                onClick={handleSuggestFoods}
+                disabled={suggestingFoods}
+                className="mt-4 w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {suggestingFoods ? "Getting suggestions..." : "What else can I eat?"}
+              </button>
+            )}
+          </>
         )}
       </div>
+
+      {suggestions.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6 mt-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Food Suggestions</h2>
+          <div className="space-y-3">
+            {suggestions.map((s, i) => (
+              <div
+                key={i}
+                className={`border-l-4 p-3 rounded-sm ${
+                  s.purine_level === "low"
+                    ? "border-green-500 bg-green-50"
+                    : s.purine_level === "medium"
+                      ? "border-yellow-500 bg-yellow-50"
+                      : "border-red-500 bg-red-50"
+                }`}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="font-medium text-gray-900">{s.name}</p>
+                    <p className="text-xs text-gray-600 mt-1">{s.note}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-gray-900">{s.calories} kcal</p>
+                    <p className="text-xs text-gray-500 capitalize mt-0.5">{s.purine_level} purine</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Last 7 Days</h2>

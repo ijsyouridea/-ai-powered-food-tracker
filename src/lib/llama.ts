@@ -1,6 +1,13 @@
 import { MODEL_PATH } from "./config";
 import { FoodItem } from "./types";
 
+interface FoodSuggestion {
+  name: string;
+  calories: number;
+  purine_level: "low" | "medium" | "high";
+  note: string;
+}
+
 let llamaInstance: any = null;
 let modelInstance: any = null;
 
@@ -37,7 +44,7 @@ Return ONLY a valid JSON array. No explanation, no markdown, no text before or a
 
 Each object in the array must have exactly these fields:
 - "name": string (normalized food name in English)
-- "quantity": number (amount consumed; estimate if not stated)
+- "quantity": number ONLY (the amount as a number, no units; e.g. 100 not "100g")
 - "unit": string (e.g. "g", "ml", "piece", "cup", "tbsp", "slice", "serving")
 - "quantityType": "measured" if exact, "estimated" if guessing, "unknown" if completely unclear
 - "calories": number (kcal; use standard reference values or reasonable estimate)
@@ -45,6 +52,8 @@ Each object in the array must have exactly these fields:
 - "carbs": number (grams; estimate based on food type)
 - "fat": number (grams; estimate based on food type)
 - "fiber": number (grams; estimate based on food type, 0 if none)
+
+IMPORTANT: quantity must be a number with no letters or units attached.
 
 Always provide numeric estimates using your knowledge of food composition. Use reasonable defaults: carbs for bread/pasta, protein for meat/eggs, fat for fried foods, etc.
 
@@ -63,7 +72,13 @@ JSON array:`;
 
     return parsed.map((item: Record<string, unknown>) => {
       const numOrNull = (v: unknown) => {
-        const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : null;
+        let n: number | null = null;
+        if (typeof v === "number") {
+          n = v;
+        } else if (typeof v === "string") {
+          const stripped = v.replace(/[^\d.]/g, "");
+          n = stripped ? Number(stripped) : null;
+        }
         return n !== null && !isNaN(n) ? n : null;
       };
       return {
@@ -80,6 +95,63 @@ JSON array:`;
         fiber: numOrNull(item.fiber),
       };
     });
+  } finally {
+    session.dispose();
+    context.dispose();
+  }
+}
+
+export async function suggestFoods(
+  remainingCalories: number,
+  dietType: string
+): Promise<FoodSuggestion[]> {
+  const { LlamaChatSession } = await import("node-llama-cpp");
+  const model = await getModel();
+  const context = await model.createContext();
+  const session = new LlamaChatSession({
+    contextSequence: context.getSequence(),
+  });
+
+  const prompt = `You are a nutrition advisor helping someone stay within their daily calorie budget while following a ${dietType} diet.
+
+The user has ${remainingCalories} calories remaining today. Suggest 3-5 specific food items or meals that:
+1. Fit within the remaining calorie budget
+2. Are appropriate for a ${dietType} diet
+3. Are practical to eat now
+
+For each suggestion, provide:
+- Food name and portion
+- Estimated calories
+- Purine level (low/medium/high) - relevant for low_purine diets
+- Brief note (why it's good or any warnings)
+
+Return ONLY valid JSON array. No explanation, no markdown, no text before or after.
+
+Each object must have exactly these fields:
+- "name": string (e.g. "grilled chicken 150g")
+- "calories": number (estimated kcal)
+- "purine_level": "low" or "medium" or "high"
+- "note": string (brief reason or note)
+
+JSON array:`;
+
+  try {
+    const response = await session.prompt(prompt);
+    const jsonStr = extractJson(response);
+    const parsed = JSON.parse(jsonStr);
+
+    if (!Array.isArray(parsed)) {
+      throw new Error("Response is not an array");
+    }
+
+    return parsed.map((item: Record<string, unknown>) => ({
+      name: String(item.name || "Unknown food"),
+      calories: typeof item.calories === "number" ? item.calories : 0,
+      purine_level: (["low", "medium", "high"].includes(item.purine_level as string)
+        ? item.purine_level
+        : "medium") as FoodSuggestion["purine_level"],
+      note: String(item.note || ""),
+    }));
   } finally {
     session.dispose();
     context.dispose();

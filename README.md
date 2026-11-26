@@ -44,6 +44,7 @@ MODEL_PATH=/path/to/model.gguf npm run dev
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/meals/analyze` | Send text to Llama, get structured food items back |
+| `POST` | `/api/meals/suggest-foods` | Suggest foods based on remaining calories and diet type |
 | `POST` | `/api/meals` | Save a confirmed meal |
 | `GET` | `/api/meals?date=YYYY-MM-DD` | Get meals for a date (or use `start`/`end` for a range) |
 | `GET` | `/api/meals/:id` | Get a single meal |
